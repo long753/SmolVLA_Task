@@ -52,3 +52,20 @@
 - 策略仅用约定观测，仿真真值用于判定。
 - 保留失败视频，诊断感知、映射与时序问题。
 
+### 运行 scripted pick-and-place 测试
+
+使用 MuJoCo viewer 观察自动抓取和放置：
+
+```bash
+conda run -n lerobot python scripts/test_scripted_pick.py --seed 42
+```
+
+无界面运行并通过进程退出码判断成功：
+
+```bash
+conda run -n lerobot \
+  python scripts/test_scripted_pick.py --headless --seed 42
+```
+
+脚本从 MuJoCo 读取方块和托盘真值，依次执行张开夹爪、预抓取、下降、闭合、抬升、搬运、下降放置、释放和撤离。脚本会补偿方块相对末端执行器的实际夹持偏移；释放后，方块必须完整位于托盘内，并连续静止 2 秒才返回成功。
+

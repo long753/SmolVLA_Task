@@ -24,7 +24,6 @@ class CubeTrayEnv:
         - step(action)
         - Cartesian controller / IK
         - wrist camera
-        - success detection
     """
 
     TASK_INSTRUCTION = "Pick up the red cube and place it in the tray."
@@ -36,9 +35,6 @@ class CubeTrayEnv:
         cube_x_range=(0.35, 0.50),
         cube_y_range=(-0.15, 0.15),
     ):
-        # ------------------------------------------------------------
-        # Paths
-        # ------------------------------------------------------------
 
         project_root = Path(__file__).resolve().parents[1]
 
@@ -55,19 +51,11 @@ class CubeTrayEnv:
                 f"MuJoCo scene not found:\n{self.scene_path}"
             )
 
-        # ------------------------------------------------------------
-        # Load MuJoCo
-        # ------------------------------------------------------------
-
         self.model = mujoco.MjModel.from_xml_path(
             str(self.scene_path)
         )
 
         self.data = mujoco.MjData(self.model)
-
-        # ------------------------------------------------------------
-        # Renderer
-        # ------------------------------------------------------------
 
         self.image_width = image_width
         self.image_height = image_height
@@ -78,16 +66,8 @@ class CubeTrayEnv:
             width=image_width,
         )
 
-        # ------------------------------------------------------------
-        # Cube randomization range
-        # ------------------------------------------------------------
-
         self.cube_x_range = cube_x_range
         self.cube_y_range = cube_y_range
-
-        # ------------------------------------------------------------
-        # Find important MuJoCo objects
-        # ------------------------------------------------------------
 
         self.cube_joint_id = mujoco.mj_name2id(
             self.model,
@@ -106,9 +86,34 @@ class CubeTrayEnv:
             self.cube_joint_id
         ]
 
-        # ------------------------------------------------------------
-        # Panda joint IDs
-        # ------------------------------------------------------------
+        # qvel address of the cube free joint
+        self.cube_qvel_adr = self.model.jnt_dofadr[
+            self.cube_joint_id
+        ]
+
+        self.cube_geom_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_GEOM,
+            "red_cube_geom",
+        )
+
+        if self.cube_geom_id == -1:
+            raise RuntimeError(
+                "Could not find geom 'red_cube_geom'. "
+                "Check task_scene.xml."
+            )
+
+        self.tray_geom_id = mujoco.mj_name2id(
+            self.model,
+            mujoco.mjtObj.mjOBJ_GEOM,
+            "tray_bottom",
+        )
+
+        if self.tray_geom_id == -1:
+            raise RuntimeError(
+                "Could not find geom 'tray_bottom'. "
+                "Check task_scene.xml."
+            )
 
         self.arm_joint_names = [
             "joint1",
@@ -143,10 +148,6 @@ class CubeTrayEnv:
             dtype=np.int32,
         )
 
-        # ------------------------------------------------------------
-        # Finger joints
-        # ------------------------------------------------------------
-
         self.finger_joint_names = [
             "finger_joint1",
             "finger_joint2",
@@ -175,10 +176,6 @@ class CubeTrayEnv:
             dtype=np.int32,
         )
 
-        # ------------------------------------------------------------
-        # Initial Panda configuration
-        # ------------------------------------------------------------
-
         # A reasonable Panda home pose.
         # We can tune this later according to your table geometry.
         self.home_qpos = np.array(
@@ -194,18 +191,11 @@ class CubeTrayEnv:
             dtype=np.float64,
         )
 
-        # ------------------------------------------------------------
-        # RNG
-        # ------------------------------------------------------------
-
         self.rng = np.random.default_rng()
 
         # Do one initial reset
         self.reset()
 
-    # ================================================================
-    # Reset
-    # ================================================================
 
     def reset(self, seed=None):
         """
@@ -228,27 +218,18 @@ class CubeTrayEnv:
             self.data,
         )
 
-        # ------------------------------------------------------------
         # Reset Panda arm
-        # ------------------------------------------------------------
-
         self.data.qpos[
             self.arm_qpos_indices
         ] = self.home_qpos
 
-        # ------------------------------------------------------------
-        # Open gripper
-        # ------------------------------------------------------------
 
         # Panda fingers usually have ~0.04 m travel each.
         self.data.qpos[
             self.finger_qpos_indices
         ] = 0.04
 
-        # ------------------------------------------------------------
         # Randomize cube position
-        # ------------------------------------------------------------
-
         cube_x = self.rng.uniform(
             self.cube_x_range[0],
             self.cube_x_range[1],
@@ -275,10 +256,6 @@ class CubeTrayEnv:
             [1.0, 0.0, 0.0, 0.0]
         )
 
-        # ------------------------------------------------------------
-        # Zero velocity
-        # ------------------------------------------------------------
-
         self.data.qvel[:] = 0.0
 
         # Recompute kinematics
@@ -288,10 +265,7 @@ class CubeTrayEnv:
         )
 
         return self.get_observation()
-
-    # ================================================================
-    # Observation
-    # ================================================================
+    
 
     def get_observation(self):
         """
@@ -310,9 +284,6 @@ class CubeTrayEnv:
 
         return obs
 
-    # ================================================================
-    # Robot state
-    # ================================================================
 
     def get_robot_state(self):
         """
@@ -344,9 +315,6 @@ class CubeTrayEnv:
 
         return state.astype(np.float32)
 
-    # ================================================================
-    # Rendering
-    # ================================================================
 
     def render_front_camera(self):
         """
@@ -365,9 +333,6 @@ class CubeTrayEnv:
 
         return image.copy()
 
-    # ================================================================
-    # Utility
-    # ================================================================
 
     def get_cube_position(self):
         """
@@ -388,9 +353,146 @@ class CubeTrayEnv:
             adr : adr + 3
         ].copy()
 
-    # ================================================================
-    # Close
-    # ================================================================
+    def get_cube_velocity(self):
+        """
+        Ground-truth cube linear and angular velocity.
+
+        Returns:
+            [vx, vy, vz, wx, wy, wz]
+        """
+
+        adr = self.cube_qvel_adr
+
+        return self.data.qvel[
+            adr : adr + 6
+        ].copy()
+
+
+    def get_tray_position(self):
+        """Return the ground-truth tray geom center in world coordinates."""
+
+        mujoco.mj_forward(
+            self.model,
+            self.data,
+        )
+
+        return self.data.geom_xpos[
+            self.tray_geom_id
+        ].copy()
+
+
+    def is_cube_in_tray(
+        self,
+        position_tolerance=0.01,
+    ):
+        """Return whether the complete cube is resting inside the tray."""
+
+        mujoco.mj_forward(
+            self.model,
+            self.data,
+        )
+
+        cube_position = self.data.geom_xpos[
+            self.cube_geom_id
+        ]
+
+        tray_position = self.data.geom_xpos[
+            self.tray_geom_id
+        ]
+
+        cube_rotation = self.data.geom_xmat[
+            self.cube_geom_id
+        ].reshape(3, 3)
+
+        tray_rotation = self.data.geom_xmat[
+            self.tray_geom_id
+        ].reshape(3, 3)
+
+        relative_position = (
+            tray_rotation.T
+            @ (
+                cube_position
+                - tray_position
+            )
+        )
+
+        relative_rotation = (
+            tray_rotation.T
+            @ cube_rotation
+        )
+
+        cube_half_extent = (
+            np.abs(
+                relative_rotation
+            )
+            @ self.model.geom_size[
+                self.cube_geom_id
+            ]
+        )
+
+        tray_half_size = self.model.geom_size[
+            self.tray_geom_id
+        ]
+
+        inside_xy = np.all(
+            np.abs(
+                relative_position[:2]
+            )
+            + cube_half_extent[:2]
+            <= tray_half_size[:2]
+        )
+
+        cube_bottom = (
+            relative_position[2]
+            - cube_half_extent[2]
+        )
+
+        on_tray_surface = (
+            abs(
+                cube_bottom
+                - tray_half_size[2]
+            )
+            <= position_tolerance
+        )
+
+        return bool(
+            inside_xy
+            and on_tray_surface
+        )
+
+
+    def is_cube_stably_in_tray(
+        self,
+        position_tolerance=0.01,
+        linear_velocity_tolerance=0.01,
+        angular_velocity_tolerance=0.1,
+    ):
+        """Return whether the cube is inside the tray and nearly stationary."""
+
+        if not self.is_cube_in_tray(
+            position_tolerance=position_tolerance,
+        ):
+            return False
+
+        cube_velocity = (
+            self.get_cube_velocity()
+        )
+
+        linear_speed = np.linalg.norm(
+            cube_velocity[:3]
+        )
+
+        angular_speed = np.linalg.norm(
+            cube_velocity[3:]
+        )
+
+        return bool(
+            linear_speed
+            < linear_velocity_tolerance
+            and angular_speed
+            < angular_velocity_tolerance
+        )
+
 
     def close(self):
         self.renderer.close()
