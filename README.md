@@ -1,71 +1,66 @@
-## 任务内容
+## Introduction
 
-### 目标
+### Task Goal
 基于 LeRobot 使用 smolVLA 抓取红色方块，并放入托盘。具体而言，在 MuJoCo 环境中采集 expert rollout，随后使用将 expert rollout 编码为 LeRobot Dataset，利用 LeRobot 来微调 smolVLA，随后对比原始 smolVLA 和微调后的 smolVLA 的任务成功率。
 
-### 模型输入、输出
-- 输入：RGB图像、机器人状态与任务指令。
-- 输出：动作序列，驱动机械臂和夹爪。
-- 成功：释放方块后，在托盘内稳定保持2秒。
-- 终止：成功、掉落、严重碰撞或超时30秒。
-- 流程：采集 → 微调 → 闭环推理 → 评估。
+### Observation Space & Action Space
 
-### 仿真与数据工具
-**MuJoCo + Gymnasium：** 场景、物理与观测。
+环境同时提供固定前置相机和随夹爪运动的腕部相机：
 
-**LeRobotDataset：** 整理轨迹与任务描述。
+| LeRobot feature | 类型和形状 | 内容 |
+| --- | --- | --- |
+| `observation.images.front` | video, `(256, 256, 3)` | 固定前置 RGB |
+| `observation.images.wrist` | video, `(256, 256, 3)` | 腕部 RGB |
+| `observation.state` | float32, `(8,)` | 7 个关节位置和单侧夹指位置（米） |
+| `action` | float32, `(8,)` | 7 个关节目标和范围为 `[0, 255]` 的夹爪命令 |
+| `episode_seed` | int64, `(1,)` | 确定性 action replay 使用的环境 seed |
 
-### 模型与接口配置
-- SmolVLA：利用本任务示教进行监督微调。
-- PyTorch：执行训练、推理并保存检查点。
-- 核对相机键、状态维度及动作维度。
-- 统一坐标系、单位及夹爪开合定义。
-- 先通过单步动作测试，再采集正式数据。
+控制和采样频率均为 25 Hz。每个控制周期执行 20 个 MuJoCo step。任务文本为
+`pick up the red cube and place it in the blue tray`。
 
-### 构建单任务仿真环境
-加载机械臂、夹爪、相机、方块与托盘。定义随机位置、成功判定、超时及复位。
+脚本专家实现在 `controllers/scripted_expert.py`，环境、采集脚本和测试脚本共用
+同一状态机。episode 只有在方块完整位于托盘内并稳定保持 2 秒后才会写入数据集；
+失败 episode 会清空缓存并按 `--max-retries` 重试。
 
-### 采集并检查示教数据
-- 遥操作或脚本专家示教抓取、搬运与放置。
-- 建议采集100条成功轨迹，覆盖多个位置。
-- 同步记录图像、状态、动作、时间戳和指令。
-- 回放抽查，剔除错帧、动作饱和及无效轨迹。
-- 按episode划分80／20；另留独立测试位置。
+### Scripts Cdoe
+- `collect_data.py:` 
+- `evaluate.py:` 
+- `test_scripted_pick.py:` 
 
-### 配置 LeRobot 训练任务
-加载lerobot/smolvla_base，锁定依赖版本。映射图像、状态与动作；用训练集计算统计量。
-
-### 微调与模型选择
-- 先做短程联调，检查前向、反向与模型保存。
-- 可从20,000步起试验，batch size按显存调整。
-- 记录训练／验证损失，定期保存检查点。
-- 结合验证场景闭环成功率选择模型。
-- 提交配置、权重、学习曲线及归一化参数。
-
-### 将训练策略接入仿真控制
-复位清空缓存，采用训练时相同的预处理。动作反归一化并限幅；执行短段后更新观测。
-
-### 固定测试集进行评估
-- 用50个独立种子对比微调前后模型。
-- 测试新位置、边界位置与轻微光照变化。
-- 统计成功率、耗时、延迟、掉落率与碰撞率。
-- 策略仅用约定观测，仿真真值用于判定。
-- 保留失败视频，诊断感知、映射与时序问题。
-
-### 运行 scripted pick-and-place 测试
-
-使用 MuJoCo viewer 观察自动抓取和放置：
+## Start
+**1. Create conda enviornment:**
 
 ```bash
-conda run -n lerobot python scripts/test_scripted_pick.py --seed 42
+conda activate lerobot
 ```
 
-无界面运行并通过进程退出码判断成功：
+**2. Test environment：**
 
 ```bash
-conda run -n lerobot \
-  python scripts/test_scripted_pick.py --headless --seed 42
+python scripts/test_scripted_pick.py 
+  --headless false
+  --seed 42 
+  --video false
 ```
 
-脚本从 MuJoCo 读取方块和托盘真值，依次执行张开夹爪、预抓取、下降、闭合、抬升、搬运、下降放置、释放和撤离。脚本会补偿方块相对末端执行器的实际夹持偏移；释放后，方块必须完整位于托盘内，并连续静止 2 秒才返回成功。
+- `seed:` random seed num
+- `headless:` use MuJoCo Viewer or not
+- `video:` use video or not
 
+
+**3. Collect LeRobotDataset：**
+
+```bash
+conda run -n lerobot python scripts/collect_data.py \
+  --num-episodes 100 \
+  --start-seed 0 \
+  --repo-id local/smolvla_cube_tray \
+  --root datasets/smolvla_cube_tray \
+  --resume false
+```
+
+- `--num-episodes：` 表示数据集最终应包含的 episode 总数
+- `start-seed：` 表示初始随机种子
+- `repo-id：` 表示数据集标签
+- `root：` 表示数据集存放位置
+- `resume：` 表示

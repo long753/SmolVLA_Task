@@ -10,6 +10,7 @@ class CubeTrayEnv:
 
     Observation:
         observation.images.front : uint8 RGB image, (H, W, 3)
+        observation.images.wrist : uint8 RGB image, (H, W, 3)
         observation.state        : float32 robot state, (8,)
         task                     : language instruction
 
@@ -17,13 +18,12 @@ class CubeTrayEnv:
         - Load Panda + cube + tray scene
         - Reset Panda
         - Randomize cube position
-        - Render front RGB image
+        - Render front and wrist RGB images
         - Return robot state
 
     Not implemented yet:
         - step(action)
         - Cartesian controller / IK
-        - wrist camera
     """
 
     TASK_INSTRUCTION = "Pick up the red cube and place it in the tray."
@@ -273,11 +273,13 @@ class CubeTrayEnv:
         """
 
         front_image = self.render_front_camera()
+        wrist_image = self.render_wrist_camera()
 
         state = self.get_robot_state()
 
         obs = {
             "observation.images.front": front_image,
+            "observation.images.wrist": wrist_image,
             "observation.state": state,
             "task": self.TASK_INSTRUCTION,
         }
@@ -316,22 +318,33 @@ class CubeTrayEnv:
         return state.astype(np.float32)
 
 
-    def render_front_camera(self):
-        """
-        Render RGB observation from the front camera.
-
-        Returns:
-            uint8 array of shape (H, W, 3)
-        """
+    def _render_camera(self, camera_name):
+        """Render one named RGB camera."""
 
         self.renderer.update_scene(
             self.data,
-            camera="front_camera",
+            camera=camera_name,
         )
 
         image = self.renderer.render()
 
         return image.copy()
+
+
+    def render_front_camera(self):
+        """Render the fixed external front camera."""
+
+        return self._render_camera(
+            "front_camera"
+        )
+
+
+    def render_wrist_camera(self):
+        """Render the camera attached to the Panda hand."""
+
+        return self._render_camera(
+            "wrist_camera"
+        )
 
 
     def get_cube_position(self):
