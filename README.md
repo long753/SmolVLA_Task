@@ -19,29 +19,23 @@ outputs/            训练和评估结果
 
 `models/`、`datasets/` 和 `outputs/` 均不进入 Git。
 
-## 安装
+## 环境配置
 
 ```bash
+# 创建 conda 环境
+conda create -n lerobot python=3.12 -y
 conda activate lerobot
 
-python -m pip install \
-  "lerobot @ git+https://github.com/huggingface/lerobot.git@2595896f8a5c70f06adc1bcdf446d3aaa4cc3f20"
+python -m pip install --upgrade \
+  pip wheel "setuptools>=77,<82"
 
-python -m pip install --no-deps -e .
+# 安装项目
+python -m pip install -e .
 ```
 
-## 数据接口
+## 实验步骤
 
-| Feature | Shape | 内容 |
-| --- | --- | --- |
-| `observation.images.front` | `(256, 256, 3)` | 前置 RGB |
-| `observation.images.wrist` | `(256, 256, 3)` | 腕部 RGB |
-| `observation.state` | `(8,)` | 7 个关节位置 + 夹指位置 |
-| `action` | `(8,)` | 7 个关节目标 + `[0,255]` 夹爪命令 |
-
-控制频率为 25 Hz。
-
-## 1. 验证脚本专家
+### 1. 验证脚本专家
 
 ```bash
 python scripts/test_scripted_pick.py \
@@ -50,7 +44,7 @@ python scripts/test_scripted_pick.py \
   --video false
 ```
 
-## 2. 采集 100 个 episode
+### 2. 采集 100 个 episode
 
 ```bash
 python scripts/collect_data.py \
@@ -62,7 +56,7 @@ python scripts/collect_data.py \
 
 已有数据集时添加 `--resume`。
 
-## 3. 微调 SmolVLA
+### 3. 微调 SmolVLA
 
 ```bash
 lerobot-train \
@@ -100,7 +94,7 @@ lerobot-train \
 训练 checkpoint 位于 `outputs/train/`；最终推理模型位于
 `models/smolvla_cube_tray_finetuned/`。
 
-## 4. 单模型评估
+### 4. 单模型评估
 
 ```bash
 python scripts/evaluate.py \
@@ -123,7 +117,7 @@ outputs/evaluation/<run_name>_seed_<seed>/
 └── wrist.mp4
 ```
 
-## 5. 50-seed 对比实验
+### 5. 50-seed 对比实验
 
 ```bash
 python scripts/compare_models.py \
