@@ -1,7 +1,6 @@
 import argparse
 import os
 from pathlib import Path
-import sys
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 
@@ -9,13 +8,12 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 
-from controllers.panda_ik_controller import PandaIKController
-from controllers.scripted_expert import ScriptedPickPlaceExpert
-from envs.cube_tray_env import CubeTrayEnv
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from utils.dataset_validation import (
+from smolvla_task.controllers.panda_ik_controller import PandaIKController
+from smolvla_task.controllers.scripted_expert import ScriptedPickPlaceExpert
+from smolvla_task.envs.cube_tray_env import CubeTrayEnv
+from smolvla_task.utils.dataset_validation import (
     DATASET_FPS,
     make_dataset_features,
     replay_episode,

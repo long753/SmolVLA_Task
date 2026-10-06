@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smolvla-cube-tray"
+version = "0.1.0"
+description = "SmolVLA cube-to-tray data collection, training, and evaluation in MuJoCo"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "imageio>=2.37,<3",
+    "mujoco>=3.3,<4",
+    "numpy>=2,<3",
+    "torch>=2.7,<3",
+    "lerobot @ git+https://github.com/huggingface/lerobot.git@2595896f8a5c70f06adc1bcdf446d3aaa4cc3f20",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"smolvla_task.envs" = [
+    "assets/*/*",
+    "assets/*/*/*",
+]
