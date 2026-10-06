@@ -7,30 +7,72 @@ Task: Pick up the red cube and place it in the tray.
 Success: 方块完整位于托盘内并稳定保持 2 秒。
 ```
 
-## 目录
+## 项目结构
 
 ```text
-src/smolvla_task/   环境、控制器与公共工具
-scripts/            数据采集、训练验证与模型对比入口
-models/             最终推理模型
-datasets/           LeRobotDataset
-outputs/            训练和评估结果
+.
+├── pyproject.toml
+├── README.md
+├── src/
+│   └── smolvla_task/
+│       ├── controllers/
+│       │   ├── panda_ik_controller.py       # Panda 逆运动学控制
+│       │   └── scripted_expert.py           # 脚本专家策略
+│       ├── envs/
+│       │   ├── cube_tray_env.py             # MuJoCo 任务环境
+│       │   └── assets/franka_emika_panda/   # Panda、方块和托盘模型
+│       └── utils/
+│           ├── dataset_validation.py        # 数据集校验与 replay
+│           ├── episode_monitor.py           # 掉落与碰撞监测
+│           └── mujoco_video_recorder.py     # 双相机视频录制
+├── scripts/
+│   ├── collect_data.py                      # 采集 LeRobotDataset
+│   ├── evaluate.py                          # 单模型闭环评估
+│   ├── compare_models.py                    # 50-seed 模型对比
+│   └── test_scripted_pick.py                # 脚本专家 smoke
+│
+├── models/ 
+│   └── smolvla_cube_tray_finetuned/         # 最终推理模型
+├── datasets/ 
+│   └── smolvla_cube_tray/                   # 100-episode 数据集
+└── outputs/ 
+    ├── train/                               # checkpoint 和训练状态
+    ├── evaluation/                          # 指标、CSV 和评估视频
+    └── video/                               # 专家测试视频
 ```
 
 `models/`、`datasets/` 和 `outputs/` 均不进入 Git。
 
 ## 环境配置
 
+默认已经安装 Conda，并在项目根目录执行以下命令。
+
 ```bash
-# 创建 conda 环境
+# 1. 创建并激活独立环境
 conda create -n lerobot python=3.12 -y
 conda activate lerobot
 
+# 2. 安装视频编解码工具
+conda install -c conda-forge "ffmpeg=9" -y
+
+# 3. 更新 Python 打包工具
 python -m pip install --upgrade \
   pip wheel "setuptools>=77,<82"
 
-# 安装项目
+# 4. 安装当前机器使用的 CUDA 13.0 版 PyTorch
+python -m pip install \
+  torch==2.11.0 \
+  torchvision==0.26.0 \
+  --index-url https://download.pytorch.org/whl/cu130
+
+# 5. 安装项目、MuJoCo 和固定版本的 LeRobot
 python -m pip install -e .
+```
+
+LeRobot 固定在：
+
+```text
+2595896f8a5c70f06adc1bcdf446d3aaa4cc3f20
 ```
 
 ## 实验步骤
