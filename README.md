@@ -1,77 +1,47 @@
 # SmolVLA Cube-to-Tray
 
-## 项目目标
-
-在 MuJoCo 中采集 Panda 脚本专家轨迹，将轨迹编码为 LeRobotDataset，
-微调 SmolVLA，并对比基础模型与微调模型的闭环任务成功率。
-
-任务文本：
+在 MuJoCo 中采集 Panda 专家轨迹，微调 SmolVLA，并对比微调前后的闭环表现。
 
 ```text
-Pick up the red cube and place it in the tray.
+Task: Pick up the red cube and place it in the tray.
+Success: 方块完整位于托盘内并稳定保持 2 秒。
 ```
 
-## 项目结构
+## 目录
 
 ```text
-src/smolvla_task/
-├── controllers/              # Panda IK 和脚本专家
-├── envs/                     # MuJoCo 环境及模型资产
-└── utils/                    # 数据集验证和视频录制
-scripts/
-├── collect_data.py           # 采集并验证 LeRobotDataset
-├── evaluate.py               # 标准/微调 SmolVLA 闭环评估
-└── test_scripted_pick.py     # 脚本专家 smoke
-models/                       # 最终推理模型，本地 artifact
-datasets/                     # 训练数据集，本地 artifact
-outputs/                      # 训练、评估和视频输出
+src/smolvla_task/   环境、控制器与公共工具
+scripts/            数据采集、训练验证与模型对比入口
+models/             最终推理模型
+datasets/           LeRobotDataset
+outputs/            训练和评估结果
 ```
 
-`models/`、`datasets/` 和 `outputs/` 不进入 Git。
+`models/`、`datasets/` 和 `outputs/` 均不进入 Git。
 
-## 数据接口
-
-| LeRobot feature | 类型和形状 | 内容 |
-| --- | --- | --- |
-| `observation.images.front` | video, `(256, 256, 3)` | 固定前置 RGB |
-| `observation.images.wrist` | video, `(256, 256, 3)` | 腕部 RGB |
-| `observation.state` | float32, `(8,)` | 7 个关节位置和单侧夹指位置（米） |
-| `action` | float32, `(8,)` | 7 个关节目标和 `[0, 255]` 夹爪命令 |
-| `episode_seed` | int64, `(1,)` | 确定性 action replay 使用的环境 seed |
-
-控制和采样频率均为 25 Hz，每个控制周期执行 20 个 MuJoCo step。
-episode 只有在方块完整位于托盘内并稳定保持 2 秒后才会写入数据集；
-失败 episode 会清空缓存并按 `--max-retries` 重试。
-
-## 环境安装
-
-所有命令在 `lerobot` conda 环境中执行：
+## 安装
 
 ```bash
 conda activate lerobot
-```
 
-本项目不再保存 LeRobot 源码。训练时使用的版本为 LeRobot `0.6.2`，
-对应上游 commit：
-
-```text
-2595896f8a5c70f06adc1bcdf446d3aaa4cc3f20
-```
-
-可安装预先构建的 wheel，或者从确切 commit 普通安装：
-
-```bash
 python -m pip install \
   "lerobot @ git+https://github.com/huggingface/lerobot.git@2595896f8a5c70f06adc1bcdf446d3aaa4cc3f20"
-```
 
-安装当前工程的开发包：
-
-```bash
 python -m pip install --no-deps -e .
 ```
 
-## 验证脚本专家
+## 数据接口
+
+| Feature | Shape | 内容 |
+| --- | --- | --- |
+| `observation.images.front` | `(256, 256, 3)` | 前置 RGB |
+| `observation.images.wrist` | `(256, 256, 3)` | 腕部 RGB |
+| `observation.state` | `(8,)` | 7 个关节位置 + 夹指位置 |
+| `action` | `(8,)` | 7 个关节目标 + `[0,255]` 夹爪命令 |
+
+控制频率为 25 Hz。
+
+## 1. 验证脚本专家
 
 ```bash
 python scripts/test_scripted_pick.py \
@@ -80,11 +50,7 @@ python scripts/test_scripted_pick.py \
   --video false
 ```
 
-- `--seed`：环境随机种子。
-- `--headless`：不启动 MuJoCo Viewer。
-- `--video`：是否录制前置相机视频。
-
-## 采集数据
+## 2. 采集 100 个 episode
 
 ```bash
 python scripts/collect_data.py \
@@ -94,13 +60,9 @@ python scripts/collect_data.py \
   --root datasets/smolvla_cube_tray
 ```
 
-- `--num-episodes`：数据集最终应包含的 episode 总数。
-- `--start-seed`：初始随机种子。
-- `--repo-id`：LeRobot 数据集逻辑标识。
-- `--root`：数据集本地路径。
-- `--resume`：从已有数据集继续补齐。
+已有数据集时添加 `--resume`。
 
-## 微调 SmolVLA
+## 3. 微调 SmolVLA
 
 ```bash
 lerobot-train \
@@ -135,19 +97,10 @@ lerobot-train \
   --wandb.enable=false
 ```
 
-最终推理 artifact 位于：
+训练 checkpoint 位于 `outputs/train/`；最终推理模型位于
+`models/smolvla_cube_tray_finetuned/`。
 
-```text
-models/smolvla_cube_tray_finetuned/
-```
-
-原始训练 checkpoint 仍保存在：
-
-```text
-outputs/train/smolvla_cube_tray/
-```
-
-## 评估微调模型
+## 4. 单模型评估
 
 ```bash
 python scripts/evaluate.py \
@@ -158,12 +111,42 @@ python scripts/evaluate.py \
   --n-action-steps 10 \
   --max-episode-seconds 30 \
   --run-name smolvla_finetuned \
-  --video true \
   --offline
 ```
 
-JSON 指标和视频写入：
+基础模型使用 `--policy-path lerobot/smolvla_base`。结果写入：
 
 ```text
-outputs/evaluation/
+outputs/evaluation/<run_name>_seed_<seed>/
+├── metrics.json
+├── front.mp4
+└── wrist.mp4
 ```
+
+## 5. 50-seed 对比实验
+
+```bash
+python scripts/compare_models.py \
+  --base-policy-path lerobot/smolvla_base \
+  --finetuned-policy-path models/smolvla_cube_tray_finetuned \
+  --dataset-repo-id local/smolvla_cube_tray \
+  --dataset-root datasets/smolvla_cube_tray \
+  --start-seed 100 \
+  --num-seeds 50 \
+  --n-action-steps 10 \
+  --max-episode-seconds 30 \
+  --run-name smolvla_base_vs_finetuned \
+  --offline
+```
+
+输出：
+
+```text
+outputs/evaluation/smolvla_base_vs_finetuned_seeds_100_149/
+├── summary.json    # 聚合结果
+├── episodes.csv    # 逐 episode 结果
+├── base/
+└── finetuned/
+```
+
+统计指标：成功率、任务耗时、推理延迟、掉落率和碰撞率。对比实验默认不录制视频。

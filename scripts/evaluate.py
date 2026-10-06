@@ -13,6 +13,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 from smolvla_task.envs.cube_tray_env import CubeTrayEnv
+from smolvla_task.utils.episode_monitor import EpisodeEventMonitor
 from smolvla_task.utils.mujoco_video_recorder import MuJoCoVideoRecorder
 
 
@@ -31,8 +32,16 @@ class EvaluationResult:
     action_chunks: int
     simulated_seconds: float
     wall_seconds: float
+    action_latencies_ms: list[float]
+    inference_latencies_ms: list[float]
     clipped_action_steps: int
     stable_duration: float
+    cube_lifted: bool
+    cube_dropped: bool
+    max_cube_height: float
+    collision: bool
+    collision_events: int
+    collision_sim_steps: int
     initial_cube_position: list[float]
     final_cube_position: list[float]
     tray_position: list[float]
@@ -145,12 +154,12 @@ def to_policy_observation(observation):
     return policy_observation
 
 
-def create_recorders(env, output_dir, run_name, seed, enabled):
+def create_recorders(env, run_dir, enabled):
     if not enabled:
         return [], None, None
 
-    front_path = output_dir / f"{run_name}_seed_{seed}_front.mp4"
-    wrist_path = output_dir / f"{run_name}_seed_{seed}_wrist.mp4"
+    front_path = run_dir / "front.mp4"
+    wrist_path = run_dir / "wrist.mp4"
     recorders = [
         MuJoCoVideoRecorder(env, front_path, camera_name="front"),
         MuJoCoVideoRecorder(env, wrist_path, camera_name="wrist"),
@@ -158,7 +167,14 @@ def create_recorders(env, output_dir, run_name, seed, enabled):
     return recorders, front_path, wrist_path
 
 
-def run_episode(args, policy, preprocessor, postprocessor, policy_source):
+def run_episode(
+    args,
+    policy,
+    preprocessor,
+    postprocessor,
+    policy_source,
+    run_dir,
+):
     import torch
 
     np.random.seed(args.seed)
@@ -168,20 +184,24 @@ def run_episode(args, policy, preprocessor, postprocessor, policy_source):
 
     env = CubeTrayEnv()
     env.MAX_EPISODE_SECONDS = args.max_episode_seconds
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
     recorders, front_path, wrist_path = create_recorders(
         env,
-        args.output_dir,
-        args.run_name,
-        args.seed,
+        run_dir,
         args.video,
     )
+    event_monitor = None
+
 
     def on_simulation_step():
         for recorder in recorders:
             recorder.on_simulation_step()
+        if event_monitor is not None:
+            event_monitor.observe()
 
     actions = []
+    action_latencies_ms = []
+    inference_latencies_ms = []
     clipped_action_steps = 0
     info = None
     started_at = time.perf_counter()
@@ -195,15 +215,29 @@ def run_episode(args, policy, preprocessor, postprocessor, policy_source):
             simulation_callback=on_simulation_step,
         )
         initial_cube_position = env.get_cube_position()
+        event_monitor = EpisodeEventMonitor(
+            env,
+            initial_cube_z=float(initial_cube_position[2]),
+        )
 
         terminated = False
         truncated = False
         while not (terminated or truncated):
+            starts_action_chunk = len(actions) % args.n_action_steps == 0
+            if args.device.startswith("cuda"):
+                torch.cuda.synchronize(torch.device(args.device))
+            action_started_at = time.perf_counter()
             batch = preprocessor(to_policy_observation(observation))
             with torch.inference_mode():
                 action = policy.select_action(batch)
             action = postprocessor(action)
             action_numpy = action.detach().cpu().numpy()
+            if args.device.startswith("cuda"):
+                torch.cuda.synchronize(torch.device(args.device))
+            action_latency_ms = (time.perf_counter() - action_started_at) * 1000.0
+            action_latencies_ms.append(action_latency_ms)
+            if starts_action_chunk:
+                inference_latencies_ms.append(action_latency_ms)
             if action_numpy.shape != (1, env.ACTION_DIM):
                 raise RuntimeError(
                     "SmolVLA returned action shape "
@@ -218,7 +252,7 @@ def run_episode(args, policy, preprocessor, postprocessor, policy_source):
             )
             clipped_action_steps += int(info["action_clipped"])
 
-            if (
+            if getattr(args, "verbose", True) and (
                 info["control_steps"] == 1
                 or info["control_steps"] % 25 == 0
                 or terminated
@@ -255,8 +289,16 @@ def run_episode(args, policy, preprocessor, postprocessor, policy_source):
         ),
         simulated_seconds=info["control_steps"] * control_period,
         wall_seconds=wall_seconds,
+        action_latencies_ms=action_latencies_ms,
+        inference_latencies_ms=inference_latencies_ms,
         clipped_action_steps=clipped_action_steps,
         stable_duration=float(info["stable_duration"]),
+        cube_lifted=event_monitor.lifted,
+        cube_dropped=event_monitor.dropped,
+        max_cube_height=event_monitor.max_cube_z,
+        collision=event_monitor.collision,
+        collision_events=event_monitor.collision_events,
+        collision_sim_steps=event_monitor.collision_sim_steps,
         initial_cube_position=initial_cube_position.tolist(),
         final_cube_position=info["cube_position"].tolist(),
         tray_position=info["tray_position"].tolist(),
@@ -279,9 +321,16 @@ def print_result(result, metrics_path):
     print(f"action_chunks:       {result.action_chunks}")
     print(f"simulated_seconds:   {result.simulated_seconds:.3f}")
     print(f"wall_seconds:        {result.wall_seconds:.3f}")
+    print(
+        "inference_latency:   "
+        f"mean={np.mean(result.inference_latencies_ms):.2f}ms "
+        f"p95={np.percentile(result.inference_latencies_ms, 95):.2f}ms"
+    )
     print(f"clipped_action_steps:{result.clipped_action_steps:>8d}")
     print(f"stable_duration:     {result.stable_duration:.3f}")
     print(f"tray_xy_error:       {result.tray_xy_error:.6f}")
+    print(f"cube_dropped:        {result.cube_dropped}")
+    print(f"collision:           {result.collision}")
     print(f"metrics:             {metrics_path}")
     if result.front_video is not None:
         print(f"front_video:         {result.front_video}")
@@ -300,6 +349,7 @@ def main():
             f"LeRobot dataset not found at {args.dataset_root}."
         )
 
+    run_dir = args.output_dir / f"{args.run_name}_seed_{args.seed}"
     policy, preprocessor, postprocessor, policy_source = load_policy_stack(args)
     result = run_episode(
         args,
@@ -307,11 +357,10 @@ def main():
         preprocessor,
         postprocessor,
         policy_source,
+        run_dir,
     )
 
-    metrics_path = args.output_dir / (
-        f"{args.run_name}_seed_{args.seed}.json"
-    )
+    metrics_path = run_dir / "metrics.json"
     metrics_path.write_text(
         json.dumps(asdict(result), indent=2) + "\n",
         encoding="utf-8",

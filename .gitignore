@@ -1,8 +1,8 @@
+models/
 datasets/
 outputs/
 __pycache__/
 *.pyc
-models/
 dist/
 build/
 *.egg-info/
